@@ -1,11 +1,14 @@
 import 'package:flutter_gherkin/flutter_gherkin.dart';
-import 'package:flutter_gherkin/src/flutter/adapters/widget_tester_app_driver_adapter.dart';
-import 'package:flutter_gherkin/src/flutter/world/flutter_world.dart';
+import 'package:flutter_gherkin/src/flutter/websockets/client.dart';
+import 'package:flutter_gherkin/src/flutter/websockets/command_definitions.dart';
 import 'package:gherkin/gherkin.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:collection/collection.dart';
+import 'package:gherkin/src/gherkin/parser.dart';
+import 'package:gherkin/src/gherkin/runnables/feature_file.dart';
+import 'package:gherkin/src/gherkin/runnables/tags.dart';
 
 class TestDependencies {
   final World world;
@@ -18,10 +21,11 @@ class TestDependencies {
 }
 
 abstract class GherkinIntegrationTestRunner {
-  final TagExpressionEvaluator _tagExpressionEvaluator =
-      TagExpressionEvaluator();
+  final TagExpressionEvaluator _tagExpressionEvaluator = TagExpressionEvaluator();
   final TestConfiguration configuration;
   final Future<void> Function(World world) appMainFunction;
+  final _parser = GherkinParser();
+  final _languageService = LanguageService();
   Reporter? _reporter;
   Hook? _hook;
   Iterable<ExecutableStep>? _executableSteps;
@@ -42,8 +46,7 @@ abstract class GherkinIntegrationTestRunner {
     configuration.prepare();
     _reporter = _registerReporters(configuration.reporters);
     _hook = _registerHooks(configuration.hooks);
-    _customParameters =
-        _registerCustomParameters(configuration.customStepParameterDefinitions);
+    _customParameters = _registerCustomParameters(configuration.customStepParameterDefinitions);
     _executableSteps = _registerStepDefinitions(
       configuration.stepDefinitions!,
       _customParameters!,
@@ -51,11 +54,9 @@ abstract class GherkinIntegrationTestRunner {
   }
 
   Future<void> run() async {
-    _binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized()
-        as IntegrationTestWidgetsFlutterBinding;
+    _binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized() as IntegrationTestWidgetsFlutterBinding;
 
-    _binding!.framePolicy =
-        framePolicy ?? LiveTestWidgetsFlutterBindingFramePolicy.benchmarkLive;
+    _binding!.framePolicy = framePolicy ?? LiveTestWidgetsFlutterBindingFramePolicy.benchmarkLive;
 
     tearDownAll(
       () {
@@ -64,9 +65,44 @@ abstract class GherkinIntegrationTestRunner {
     );
 
     _safeInvokeFuture(() async => await hook.onBeforeRun(configuration));
+
+    _languageService.initialise(configuration.featureDefaultLanguage);
+    // We can now start parsing all the files.
+    List<FeatureFile> parsedFeatures = [];
+
+    var features = configuration.features;
+    features.forEach((featurePath) async {
+      var files = await WebsocketClient().sendCommand(WebSocketCommands.GetFeatureFile) as List<String>;
+      files.forEach((file) async {
+        var featureParsed = await _parser.parseFeatureFile(file, featurePath.toString(), reporter, _languageService);
+        parsedFeatures.add(featureParsed);
+      });
+    });
+
     _safeInvokeFuture(() async => await reporter.onTestRunStarted());
 
-    onRun();
+    _runFeatures(parsedFeatures);
+    // onRun();
+  }
+
+  void _runFeatures(List<FeatureFile> features) {
+    features.forEach((featureFile) {
+      featureFile.features.forEach((feature) {
+        onBeforeRunFeature(feature.name, feature.tags, feature.debug.filePath);
+        runFeature(feature.name, feature.tags, () {
+          feature.scenarios.forEach((scenario) {
+            onBeforeRunFeature(scenario.name, scenario.tags, scenario.debug.filePath);
+            runScenario(scenario.name, scenario.tags, (TestDependencies dep) async {
+              scenario.steps.forEach((step) async {
+                await runStep(step.name, step.multilineStrings, step.table, dep);
+              });
+            }, scenario.debug.filePath);
+            onAfterRunFeature(scenario.name, scenario.debug.filePath);
+          });
+        });
+        onAfterRunFeature(feature.name, feature.debug.filePath);
+      });
+    });
   }
 
   void onRun();
@@ -88,7 +124,7 @@ abstract class GherkinIntegrationTestRunner {
   @protected
   void runFeature(
     String name,
-    Iterable<String>? tags,
+    Iterable<TagsRunnable>? tags,
     void Function() runFeature,
   ) {
     group(
@@ -102,11 +138,11 @@ abstract class GherkinIntegrationTestRunner {
   @protected
   Future<void> onBeforeRunFeature(
     String name,
-    Iterable<String>? tags,
+    Iterable<TagsRunnable>? tags,
+    String path,
   ) async {
-    final debugInformation = RunnableDebugInformation('', 0, name);
-    final featureTags =
-        (tags ?? Iterable<Tag>.empty()).map((t) => Tag(t.toString(), 0));
+    final debugInformation = RunnableDebugInformation(path, 0, name);
+    final featureTags = (tags ?? Iterable<Tag>.empty()).map((t) => Tag(t.toString(), 0));
     await reporter.onFeatureStarted(
       StartedMessage(
         Target.feature,
@@ -120,8 +156,9 @@ abstract class GherkinIntegrationTestRunner {
   @protected
   Future<void> onAfterRunFeature(
     String name,
+    String path,
   ) async {
-    final debugInformation = RunnableDebugInformation('', 0, name);
+    final debugInformation = RunnableDebugInformation(path, 0, name);
     await reporter.onFeatureFinished(
       FinishedMessage(
         Target.feature,
@@ -134,22 +171,16 @@ abstract class GherkinIntegrationTestRunner {
   @protected
   void runScenario(
     String name,
-    Iterable<String>? tags,
-    Future<void> Function(TestDependencies dependencies) runTest, {
-    Future<void> Function()? onBefore,
-    Future<void> Function()? onAfter,
-  }) {
+    Iterable<TagsRunnable>? tags,
+    Future<void> Function(TestDependencies dependencies) runTest,
+    String path,
+  ) {
     if (_evaluateTagFilterExpression(configuration.tagExpression, tags)) {
       testWidgets(
         name,
         (WidgetTester tester) async {
-          if (onBefore != null) {
-            await onBefore();
-          }
-
-          final debugInformation = RunnableDebugInformation('', 0, name);
-          final scenarioTags =
-              (tags ?? Iterable<Tag>.empty()).map((t) => Tag(t.toString(), 0));
+          final debugInformation = RunnableDebugInformation(path, 0, name);
+          final scenarioTags = (tags ?? Iterable<Tag>.empty()).map((t) => Tag(t.toString(), 0));
           final dependencies = await createTestDependencies(
             configuration,
             tester,
@@ -198,17 +229,11 @@ abstract class GherkinIntegrationTestRunner {
               scenarioTags,
             );
 
-            if (onAfter != null) {
-              await onAfter();
-            }
-
             cleanupScenarioRun(dependencies);
           }
         },
         timeout: scenarioExecutionTimeout,
-        semanticsEnabled: configuration is FlutterTestConfiguration
-            ? (configuration as FlutterTestConfiguration).semanticsEnabled
-            : true,
+        semanticsEnabled: configuration is FlutterTestConfiguration ? (configuration as FlutterTestConfiguration).semanticsEnabled : true,
       );
     } else {
       _safeInvokeFuture(
@@ -235,8 +260,7 @@ abstract class GherkinIntegrationTestRunner {
     WidgetTester tester,
   ) async {
     World? world;
-    final attachmentManager =
-        await configuration.getAttachmentManager(configuration);
+    final attachmentManager = await configuration.getAttachmentManager(configuration);
 
     if (configuration.createWorld != null) {
       world = await configuration.createWorld!(configuration);
@@ -421,8 +445,7 @@ abstract class GherkinIntegrationTestRunner {
         step,
         RunnableDebugInformation('', 0, step),
         table: table,
-        multilineString:
-            multiLineStrings.isNotEmpty ? multiLineStrings.first : null,
+        multilineString: multiLineStrings.isNotEmpty ? multiLineStrings.first : null,
       ),
     );
   }
@@ -435,10 +458,8 @@ abstract class GherkinIntegrationTestRunner {
 
   bool _evaluateTagFilterExpression(
     String? tagExpression,
-    Iterable<String>? tags,
+    Iterable<TagsRunnable>? tags,
   ) {
-    return tagExpression == null || tagExpression.isEmpty
-        ? true
-        : _tagExpressionEvaluator.evaluate(tagExpression, tags!.toList());
+    return tagExpression == null || tagExpression.isEmpty ? true : _tagExpressionEvaluator.evaluate(tagExpression, tags!.map((e) => e.name).toList());
   }
 }

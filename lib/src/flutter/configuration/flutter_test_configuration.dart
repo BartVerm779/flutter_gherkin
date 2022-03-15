@@ -24,7 +24,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gherkin/gherkin.dart';
 
 class FlutterTestConfiguration extends TestConfiguration {
- 
   /// ~~The path(s) to all the features.~~
   /// ~~All three [Pattern]s are supported: [RegExp], [String], [Glob].~~
   ///
@@ -32,10 +31,7 @@ class FlutterTestConfiguration extends TestConfiguration {
   @deprecated
   Iterable<Pattern> features = const <Pattern>[];
 
-  /// ~~The execution order of features - this default to random to avoid any inter-test dependencies~~
-  ///
-  /// Instead of using this variable, give the executionOrder in the `@GherkinTestSuite(executionOrder: ExecutionOrder.random)` option.
-  @deprecated
+  /// The execution order of features - this default to random to avoid any inter-test dependencies
   ExecutionOrder order = ExecutionOrder.random;
 
   /// ~~Lists feature files paths, which match [features] patterns.~~
@@ -50,11 +46,11 @@ class FlutterTestConfiguration extends TestConfiguration {
   /// Instead of using this variable, give the features in the `@GherkinTestSuite(features: <String>[])` option.
   @deprecated
   FeatureFileReader featureFileReader = const IoFeatureFileAccessor();
-  
+
   /// Enable semantics in a test by creating a [SemanticsHandle].
   /// See:  [testWidgets] and [WidgetController.ensureSemantics].
   bool semanticsEnabled = true;
-  
+
   /// Provide a configuration object with default settings such as the reports and feature file location
   /// Additional setting on the configuration object can be set on the returned instance.
   static FlutterTestConfiguration DEFAULT(
@@ -75,12 +71,11 @@ class FlutterTestConfiguration extends TestConfiguration {
 
   @override
   void prepare() {
-    customStepParameterDefinitions =
-        List.from(customStepParameterDefinitions ?? Iterable.empty())
-          ..addAll([
-            ExistenceParameter(),
-            SwipeDirectionParameter(),
-          ]);
+    customStepParameterDefinitions = List.from(customStepParameterDefinitions ?? Iterable.empty())
+      ..addAll([
+        ExistenceParameter(),
+        SwipeDirectionParameter(),
+      ]);
     stepDefinitions = List.from(stepDefinitions ?? Iterable.empty())
       ..addAll([
         ThenExpectElementToHaveValue(),
