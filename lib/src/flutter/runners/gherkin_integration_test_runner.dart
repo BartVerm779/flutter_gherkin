@@ -53,7 +53,7 @@ abstract class GherkinIntegrationTestRunner {
     );
   }
 
-  Future<void> run() async {
+  Future run() async {
     _binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized() as IntegrationTestWidgetsFlutterBinding;
 
     _binding!.framePolicy = framePolicy ?? LiveTestWidgetsFlutterBindingFramePolicy.benchmarkLive;
@@ -71,18 +71,47 @@ abstract class GherkinIntegrationTestRunner {
     List<FeatureFile> parsedFeatures = [];
 
     var features = configuration.features;
-    features.forEach((featurePath) async {
-      var files = await WebsocketClient().sendCommand(WebSocketCommands.GetFeatureFile) as List<String>;
-      files.forEach((file) async {
-        var featureParsed = await _parser.parseFeatureFile(file, featurePath.toString(), reporter, _languageService);
+    try{
+      for(var i = 0; i < features.length; i++) {
+      final featurePath = features.elementAt(i).toString();
+      print(featurePath);
+      await Future.delayed(const Duration(seconds: 5));
+      var files = await WebsocketClient().sendCommand(WebSocketCommands.GetFeatureFile, additionalData: featurePath) as List<String>;
+      print(files.length);
+      for(int x = 0; x < files.length; x++) {
+        var featureParsed = await _parser.parseFeatureFile(files[i], featurePath.toString(), reporter, _languageService);
         parsedFeatures.add(featureParsed);
-      });
-    });
+      }
+    }
+    }catch(e) {
+      print("ERROR PUNCHLINE MCGREGGOR");
+      print(e);
+    }
+
+    print("PARSED FEATURES");
+    print(parsedFeatures.length);
+    
+    // features.forEach((featurePath) async {
+    //   print(featurePath);
+    //   try{
+    //     var files = await WebsocketClient().sendCommand(WebSocketCommands.GetFeatureFile, featurePath) as List<String>;
+    //   print(files);
+    //   print(files.length);
+    //   files.forEach((file) async {
+    //     print(file);
+    //     var featureParsed = await _parser.parseFeatureFile(file, featurePath.toString(), reporter, _languageService);
+    //     parsedFeatures.add(featureParsed);
+    //   });
+    //   }catch(e) {
+    //     print(e);
+    //   }
+    // });
 
     _safeInvokeFuture(() async => await reporter.onTestRunStarted());
 
     _runFeatures(parsedFeatures);
-    // onRun();
+    onRun();
+    onRunComplete();
   }
 
   void _runFeatures(List<FeatureFile> features) {

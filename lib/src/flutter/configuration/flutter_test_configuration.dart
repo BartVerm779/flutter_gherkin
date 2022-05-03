@@ -28,7 +28,7 @@ class FlutterTestConfiguration extends TestConfiguration {
   /// ~~All three [Pattern]s are supported: [RegExp], [String], [Glob].~~
   ///
   /// Instead of using this variable, give the features in the `@GherkinTestSuite(features: <String>[])` option.
-  @deprecated
+  // @deprecated
   Iterable<Pattern> features = const <Pattern>[];
 
   /// The execution order of features - this default to random to avoid any inter-test dependencies

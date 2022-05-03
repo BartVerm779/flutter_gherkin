@@ -9,6 +9,8 @@ class WebsocketServer {
   Future startServer() async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
     server.listen((HttpRequest req) async {
+      print(req);
+      print("CONNECTION!");
       if (req.uri.path == "/ws") {
         webSocket = await WebSocketTransformer.upgrade(req);
         String? command;
